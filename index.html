@@ -1,0 +1,928 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>로우폴리 포뮬러 테스트</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;600&family=Saira+Extra+Condensed:ital,wght@1,600;1,800&display=swap">
+<style>
+  /* 레이아웃: 3D 화면 전체 위에 좌상단 안내, 하단 조작 키, 우하단 계기판을 얹는다. */
+  :root {
+    color-scheme: dark;
+    --ground: #3a45d6;
+    --ink: #10143f;
+    --panel: rgba(16, 20, 63, .78);
+    --line: rgba(255, 255, 255, .28);
+    --text: #ffffff;
+    --muted: #c5caff;
+    --signal: #ffc531;
+    --font-body: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+    --font-gauge: "Saira Extra Condensed", "Arial Narrow", sans-serif;
+  }
+  html, body { height: 100%; margin: 0; overflow: hidden; background: var(--ground); color: var(--text); font-family: var(--font-body); }
+
+  .hud { position: fixed; z-index: 10; pointer-events: none; }
+  #intro {
+    top: calc(16px + env(safe-area-inset-top, 0px));
+    left: max(16px, env(safe-area-inset-left, 0px));
+    width: min(320px, calc(100vw - 32px));
+    display: grid; gap: 10px; padding: 16px;
+    background: var(--panel); border-radius: 6px;
+  }
+  #intro h1 { margin: 0; font-size: 18px; line-height: 1.3; font-weight: 600; text-wrap: balance; }
+  #intro p { margin: 0; font-size: 14px; line-height: 1.6; color: var(--muted); word-break: keep-all; }
+  #start {
+    pointer-events: auto; cursor: pointer; justify-self: start;
+    padding: 9px 16px; border: 0; border-radius: 4px;
+    background: var(--signal); color: var(--ink);
+    font: 600 15px var(--font-body);
+  }
+  #start:focus-visible, .key:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+  #intro.driving { width: auto; padding: 8px 12px; }
+  #intro.driving p, #intro.driving #start { display: none; }
+  #intro.driving h1 { font-size: 14px; }
+  #intro.driving h1::after { content: " · R 처음으로"; color: var(--muted); font-weight: 400; }
+
+  #pad {
+    left: max(16px, env(safe-area-inset-left, 0px));
+    bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+    display: grid; gap: 6px;
+    grid-template-columns: 46px 46px 46px 10px 96px;
+    grid-template-rows: 46px 46px;
+    grid-template-areas: ". w . . shift" "a s d . space";
+  }
+  .key {
+    pointer-events: auto; touch-action: none; user-select: none; -webkit-user-select: none;
+    display: grid; place-items: center; padding: 0; cursor: pointer;
+    border: 1px solid var(--line); border-radius: 5px;
+    background: var(--panel); color: var(--text);
+    font: 600 14px var(--font-body);
+  }
+  .key small { display: block; font-size: 11px; font-weight: 400; color: var(--muted); }
+  .key.on { background: var(--signal); border-color: var(--signal); color: var(--ink); }
+  .key.on small { color: var(--ink); }
+  [data-input="forward"] { grid-area: w; } [data-input="left"] { grid-area: a; }
+  [data-input="back"] { grid-area: s; } [data-input="right"] { grid-area: d; }
+  [data-input="boost"] { grid-area: shift; } [data-input="brake"] { grid-area: space; }
+
+  #gauge {
+    right: max(16px, env(safe-area-inset-right, 0px));
+    bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+    display: flex; align-items: flex-end; gap: 14px; padding: 10px 14px;
+    background: var(--panel); border-radius: 6px;
+    font-variant-numeric: tabular-nums;
+  }
+  #speedBox { min-width: 104px; text-align: right; }
+  #speed { display: block; font: italic 800 62px/0.95 var(--font-gauge); }
+  #unit { font-size: 12px; color: var(--muted); }
+  #gear { color: var(--signal); font-weight: 600; }
+  #motion { display: grid; justify-items: center; gap: 4px; font-size: 12px; color: var(--muted); }
+  #motion svg { display: block; }
+  #readout { white-space: nowrap; }
+
+  @media (pointer: coarse), (max-width: 620px) {
+    #pad {
+      right: max(16px, env(safe-area-inset-right, 0px));
+      grid-template-columns: 64px 64px 1fr 72px 64px;
+      grid-template-rows: 58px 58px;
+      grid-template-areas: ". . . shift w" "a d . space s";
+    }
+    #gauge {
+      top: calc(16px + env(safe-area-inset-top, 0px)); bottom: auto;
+      padding: 6px 10px; gap: 8px;
+    }
+    #speedBox { min-width: 64px; }
+    #speed { font-size: 38px; }
+    #motion { display: none; }
+    #intro { top: calc(84px + env(safe-area-inset-top, 0px)); }
+    #intro.driving { top: calc(16px + env(safe-area-inset-top, 0px)); }
+  }
+  @media (max-height: 460px) { #intro { top: calc(16px + env(safe-area-inset-top, 0px)); width: 260px; padding: 12px; } }
+</style>
+
+<script src="https://cdn.jsdelivr.net/npm/aframe@1.7.1/dist/aframe-master.min.js"></script>
+<script>
+/* ---------- 튜닝 값: 주행감과 색상은 여기서 조절합니다 ---------- */
+const CONFIG = {
+  car: {
+    wheelbase: 3.0,
+    topSpeed: 34,        // m/s, 일반 최고 속도
+    boostSpeed: 44,      // m/s, 부스터 최고 속도
+    reverseSpeed: 9,
+    acceleration: 21,    // m/s²
+    boostAcceleration: 38,
+    brake: 32,           // S 브레이크
+    hardBrake: 62,       // 스페이스 급브레이크
+    drag: 0.42,          // 가속 페달을 뗐을 때의 감속
+    grip: 7.5,           // 옆 미끄러짐을 잡는 힘
+    brakeGrip: 3.2,      // 급브레이크 중에는 낮아져서 차가 미끄러짐
+    steerLow: 0.58,      // 저속 최대 조향각(rad)
+    steerHigh: 0.105,    // 고속 최대 조향각(rad)
+    displayScale: 8.8    // 장난감 크기 세계의 속도를 km/h처럼 보이게 하는 배율
+  },
+  // 출렁임: stiffness가 높을수록 빠르게 반응하고, damping이 낮을수록 오래 출렁입니다.
+  suspension: {
+    stiffness: 95,
+    damping: 7.5,
+    pitchPerAccel: 0.0042,
+    rollPerAccel: 0.0028,
+    heavePerAccel: 0.0016,
+    maxPitchUp: 0.1,
+    maxPitchDown: 0.14,
+    maxRoll: 0.11
+  },
+  camera: { offset: [15, 21, 19], fov: 34, lookAhead: 0.3, speedZoom: 0.28, smoothing: 4.5 },
+  color: {
+    ground: '#3a45d6', track: '#1b2174', trackLine: '#8d97ff', tree: '#8d97ff', trunk: '#252c94',
+    rock: '#5560ea', kerbA: '#ffffff', kerbB: '#ff5a4f', fence: '#6470f2',
+    body: '#f6f7ff', accent: '#ffc531', carbon: '#14162b', tyre: '#191a2a', rim: '#ffc531',
+    helmet: '#ff5a4f', cone: '#ff5a4f', crate: '#ffc531', crateAlt: '#f6f7ff'
+  }
+};
+
+/* ---------- 입력: e.code를 사용해 한글 입력 상태에서도 WASD가 동작합니다 ---------- */
+const input = { forward: false, back: false, left: false, right: false, boost: false, brake: false };
+const KEYS = {
+  KeyW: 'forward', ArrowUp: 'forward', KeyS: 'back', ArrowDown: 'back',
+  KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right',
+  ShiftLeft: 'boost', ShiftRight: 'boost', Space: 'brake'
+};
+function setInput(name, value) {
+  input[name] = value;
+  const key = document.querySelector('.key[data-input="' + name + '"]');
+  if (key) key.classList.toggle('on', value);
+}
+function beginDriving() {
+  const intro = document.getElementById('intro');
+  if (intro) intro.classList.add('driving');
+  window.focus();
+}
+window.addEventListener('keydown', function (e) {
+  const name = KEYS[e.code];
+  if (name) { e.preventDefault(); setInput(name, true); beginDriving(); }
+  if (e.code === 'KeyR' && !e.repeat) WORLD.reset();
+});
+window.addEventListener('keyup', function (e) {
+  const name = KEYS[e.code];
+  if (name) { e.preventDefault(); setInput(name, false); }
+});
+window.addEventListener('blur', function () { Object.keys(input).forEach(function (k) { setInput(k, false); }); });
+
+/* ---------- 도형 도우미 ---------- */
+function makeMaterial(color, extra) {
+  return new THREE.MeshStandardMaterial(Object.assign({ color: color, roughness: 0.72, metalness: 0, flatShading: true }, extra));
+}
+function addMesh(geometry, material, parent, x, y, z) {
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.position.set(x || 0, y || 0, z || 0);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  parent.add(mesh);
+  return mesh;
+}
+function addBox(w, h, d, material, parent, x, y, z) {
+  return addMesh(new THREE.BoxGeometry(w, h, d), material, parent, x, y, z);
+}
+// 두 점을 잇는 가는 막대. 서스펜션 암과 페어링 지지대에 사용합니다.
+function addStrut(a, b, thickness, material, parent) {
+  const from = new THREE.Vector3().fromArray(a), to = new THREE.Vector3().fromArray(b);
+  const mesh = addBox(thickness, thickness * 0.6, from.distanceTo(to), material, parent);
+  mesh.position.copy(from).add(to).multiplyScalar(0.5);
+  mesh.lookAt(parent.localToWorld(to.clone()));
+  return mesh;
+}
+// z축을 따라 단면을 이어 붙여 각진 차체를 만듭니다. 단면은 앞(-z)에서 뒤(+z) 순서입니다.
+function loft(sections, sides) {
+  const rings = sections.map(function (s) {
+    const ring = [];
+    for (let i = 0; i < sides; i++) {
+      const angle = (i + 0.5) / sides * Math.PI * 2;
+      ring.push([(s.x || 0) + Math.cos(angle) * s.w / 2, s.y + Math.sin(angle) * s.h / 2, s.z]);
+    }
+    return ring;
+  });
+  const positions = [];
+  const tri = function (a, b, c) { positions.push.apply(positions, a.concat(b, c)); };
+  for (let s = 0; s < rings.length - 1; s++) {
+    for (let i = 0; i < sides; i++) {
+      const n = (i + 1) % sides;
+      const a = rings[s][i], b = rings[s][n], c = rings[s + 1][n], d = rings[s + 1][i];
+      tri(a, b, d); tri(b, c, d);
+    }
+  }
+  const first = sections[0], last = sections[sections.length - 1];
+  const front = [first.x || 0, first.y, first.z], back = [last.x || 0, last.y, last.z];
+  for (let i = 0; i < sides; i++) {
+    const n = (i + 1) % sides;
+    tri(front, rings[0][n], rings[0][i]);
+    tri(back, rings[rings.length - 1][i], rings[rings.length - 1][n]);
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+/* ---------- 충돌과 밀리는 물체를 담는 공용 세계 정보 ---------- */
+const WORLD = {
+  bounds: 160,
+  statics: [],
+  props: [],
+  resetters: [],
+  reset: function () { this.resetters.forEach(function (fn) { fn(); }); },
+  wake: function (prop) {
+    if (!prop.asleep) return;
+    prop.asleep = false;
+    const self = this;
+    this.props.forEach(function (other) {
+      if (other.asleep && Math.hypot(other.x - prop.x, other.z - prop.z) < 3.4) self.wake(other);
+    });
+  }
+};
+
+/* ---------- 차량 ---------- */
+AFRAME.registerComponent('f1-car', {
+  schema: { x: { default: 34 }, z: { default: 70 }, heading: { default: Math.PI / 2 } },
+
+  init: function () {
+    this.state = { aLong: 0, aLat: 0, slip: 0, boosting: false, hardBraking: false };
+    this.accumulator = 0;
+    this.smoothDt = 1 / 60;
+    this.hudTimer = 0;
+    this.cameraEl = document.querySelector('[follow-cam]');
+    const sunOffset = new THREE.Vector3(26, 52, 18);
+    const back = sunOffset.clone().normalize();
+    const right = new THREE.Vector3(0, 1, 0).cross(back).normalize();
+    this.sunAxes = { offset: sunOffset, back: back, right: right, up: back.clone().cross(right) };
+    this.sunPoint = new THREE.Vector3();
+    this.buildCar();
+    this.buildEffects();
+    this.sun = document.getElementById('sun');
+    this.sunTarget = document.getElementById('sunTarget');
+    this.hud = {
+      speed: document.getElementById('speed'), gear: document.getElementById('gear'),
+      dot: document.getElementById('gDot'), readout: document.getElementById('readout')
+    };
+    this.reset = this.reset.bind(this);
+    WORLD.resetters.push(this.reset);
+    this.reset();
+  },
+
+  reset: function () {
+    const s = this.state;
+    Object.assign(s, {
+      x: this.data.x, z: this.data.z, heading: this.data.heading, vx: 0, vz: 0, forwardSpeed: 0, steer: 0,
+      pitch: 0, pitchV: 0, roll: 0, rollV: 0, heave: 0, heaveV: 0, wheelSpin: 0, lastStamp: null,
+      prevX: this.data.x, prevZ: this.data.z, prevHeading: this.data.heading,
+      renderX: this.data.x, renderZ: this.data.z
+    });
+    if (this.skids) { this.skids.count = 0; this.skidIndex = 0; this.skidsFilled = 0; }
+  },
+
+  buildCar: function () {
+    const c = CONFIG.color;
+    const white = makeMaterial(c.body), accent = makeMaterial(c.accent), carbon = makeMaterial(c.carbon);
+    this.bodyGroup = new THREE.Group();
+    this.el.object3D.add(this.bodyGroup);
+    const body = this.bodyGroup;
+
+    // 모노코크: 노즈부터 엔진 커버까지 하나의 단면 연결
+    addMesh(loft([
+      { z: -2.62, w: 0.15, h: 0.09, y: 0.24 }, { z: -1.75, w: 0.33, h: 0.22, y: 0.31 },
+      { z: -0.95, w: 0.5, h: 0.38, y: 0.41 }, { z: -0.15, w: 0.62, h: 0.5, y: 0.5 },
+      { z: 0.5, w: 0.64, h: 0.62, y: 0.56 }, { z: 1.2, w: 0.46, h: 0.64, y: 0.6 },
+      { z: 2.0, w: 0.2, h: 0.36, y: 0.52 }, { z: 2.42, w: 0.1, h: 0.12, y: 0.42 }
+    ], 8), white, body);
+    // 노즈와 엔진 커버의 노란 포인트
+    addMesh(loft([
+      { z: -2.64, w: 0.1, h: 0.05, y: 0.29 }, { z: -1.75, w: 0.18, h: 0.05, y: 0.43 },
+      { z: -0.95, w: 0.28, h: 0.05, y: 0.61 }
+    ], 6), accent, body);
+    addBox(0.035, 0.34, 1.35, accent, body, 0, 1.03, 1.5);
+    // 플로어
+    addMesh(loft([
+      { z: -0.75, w: 0.75, h: 0.05, y: 0.15 }, { z: -0.25, w: 1.55, h: 0.05, y: 0.15 },
+      { z: 1.65, w: 1.5, h: 0.05, y: 0.15 }, { z: 2.3, w: 1.0, h: 0.05, y: 0.16 }
+    ], 4), carbon, body);
+    // 사이드포드
+    [-1, 1].forEach(function (side) {
+      addMesh(loft([
+        { x: side * 0.56, z: -0.4, w: 0.38, h: 0.2, y: 0.38 }, { x: side * 0.6, z: 0.05, w: 0.5, h: 0.38, y: 0.4 },
+        { x: side * 0.55, z: 0.95, w: 0.42, h: 0.32, y: 0.34 }, { x: side * 0.28, z: 1.85, w: 0.14, h: 0.12, y: 0.27 }
+      ], 6), white, body);
+      addBox(0.3, 0.16, 0.05, carbon, body, side * 0.6, 0.4, -0.42);
+      addBox(0.16, 0.05, 0.08, carbon, body, side * 0.42, 0.88, -0.28);   // 미러
+      addStrut([side * 0.28, 0.72, -0.2], [side * 0.42, 0.88, -0.28], 0.03, carbon, body);
+    });
+    // 조종석, 드라이버 헬멧, 헤일로
+    addMesh(loft([
+      { z: -0.3, w: 0.3, h: 0.1, y: 0.75 }, { z: 0.15, w: 0.44, h: 0.14, y: 0.8 }, { z: 0.5, w: 0.36, h: 0.12, y: 0.82 }
+    ], 6), carbon, body);
+    addMesh(new THREE.IcosahedronGeometry(0.17, 1), makeMaterial(c.helmet), body, 0, 0.93, 0.28);
+    addBox(0.23, 0.07, 0.04, carbon, body, 0, 0.95, 0.12);
+    const halo = addMesh(new THREE.TorusGeometry(0.34, 0.032, 5, 12, Math.PI), carbon, body, 0, 1.03, 0.22);
+    halo.rotation.x = -Math.PI / 2 - 0.08;
+    addStrut([0, 0.72, -0.52], [0, 1.05, -0.12], 0.05, carbon, body);
+    addStrut([0.34, 1.03, 0.22], [0.3, 0.8, 0.62], 0.05, carbon, body);
+    addStrut([-0.34, 1.03, 0.22], [-0.3, 0.8, 0.62], 0.05, carbon, body);
+    // 흡기구
+    addMesh(loft([
+      { z: 0.5, w: 0.24, h: 0.26, y: 0.96 }, { z: 0.75, w: 0.26, h: 0.3, y: 0.96 }, { z: 1.4, w: 0.12, h: 0.1, y: 0.92 }
+    ], 6), carbon, body);
+    // 프론트 윙
+    addMesh(loft([
+      { z: -2.95, w: 1.98, h: 0.035, y: 0.13 }, { z: -2.45, w: 1.98, h: 0.05, y: 0.15 }
+    ], 4), accent, body);
+    const flap = addBox(1.8, 0.03, 0.22, carbon, body, 0, 0.25, -2.38);
+    flap.rotation.x = 0.35;
+    [-1, 1].forEach(function (side) {
+      addBox(0.04, 0.26, 0.74, carbon, body, side * 0.99, 0.2, -2.68);
+      addBox(0.04, 0.2, 0.05, carbon, body, side * 0.12, 0.2, -2.45);
+    });
+    // 리어 윙과 디퓨저
+    const beam = addBox(1.28, 0.05, 0.36, accent, body, 0, 1.2, 2.5);
+    beam.rotation.x = 0.16;
+    addBox(1.28, 0.04, 0.16, carbon, body, 0, 1.32, 2.72).rotation.x = 0.5;
+    addBox(1.28, 0.05, 0.22, carbon, body, 0, 0.72, 2.46);
+    [-1, 1].forEach(function (side) {
+      addBox(0.045, 0.82, 0.88, carbon, body, side * 0.66, 0.9, 2.52);
+      addBox(0.05, 0.75, 0.12, carbon, body, side * 0.14, 0.85, 2.42);
+    });
+    addBox(1.12, 0.22, 0.28, carbon, body, 0, 0.26, 2.42);
+    // 브레이크등
+    this.brakeLight = new THREE.MeshStandardMaterial({ color: '#5a0c10', emissive: '#ff2020', emissiveIntensity: 0 });
+    addBox(0.22, 0.1, 0.03, this.brakeLight, body, 0, 0.44, 2.58);
+    // 부스터 불꽃
+    const flameGeometry = new THREE.ConeGeometry(0.15, 1, 7);
+    flameGeometry.translate(0, 0.5, 0);
+    flameGeometry.rotateX(Math.PI / 2);
+    this.flame = new THREE.Mesh(flameGeometry, new THREE.MeshBasicMaterial({ color: '#ffb12a' }));
+    this.flame.position.set(0, 0.62, 2.45);
+    this.flame.visible = false;
+    body.add(this.flame);
+
+    // 바퀴는 차체 흔들림과 분리해 지면에 붙어 있습니다.
+    const tyre = makeMaterial(c.tyre, { roughness: 0.9 }), rim = makeMaterial(c.rim);
+    this.steerGroups = [];
+    this.spinGroups = [];
+    const self = this;
+    [[-0.98, -1.5, 0.37, 0.42], [0.98, -1.5, 0.37, 0.42], [-0.96, 1.5, 0.42, 0.56], [0.96, 1.5, 0.42, 0.56]].forEach(function (w, index) {
+      const steer = new THREE.Group();
+      steer.position.set(w[0], w[2], w[1]);
+      self.el.object3D.add(steer);
+      const spin = new THREE.Group();
+      steer.add(spin);
+      const tyreGeo = new THREE.CylinderGeometry(w[2], w[2], w[3], 12);
+      tyreGeo.rotateZ(Math.PI / 2);
+      addMesh(tyreGeo, tyre, spin);
+      const rimGeo = new THREE.CylinderGeometry(w[2] * 0.56, w[2] * 0.56, w[3] + 0.02, 6);
+      rimGeo.rotateZ(Math.PI / 2);
+      addMesh(rimGeo, rim, spin);
+      addBox(w[3] + 0.04, 0.08, w[2] * 1.1, carbon, spin);
+      if (index < 2) self.steerGroups.push(steer);
+      self.spinGroups.push(spin);
+      const sign = Math.sign(w[0]), hubX = w[0] - sign * w[3] * 0.45;
+      addStrut([sign * 0.28, 0.46, w[1] - 0.35], [hubX, w[2] + 0.1, w[1]], 0.05, carbon, body);
+      addStrut([sign * 0.28, 0.46, w[1] + 0.35], [hubX, w[2] + 0.1, w[1]], 0.05, carbon, body);
+      addStrut([sign * 0.25, 0.28, w[1] - 0.3], [hubX, w[2] - 0.08, w[1]], 0.05, carbon, body);
+      addStrut([sign * 0.25, 0.28, w[1] + 0.3], [hubX, w[2] - 0.08, w[1]], 0.05, carbon, body);
+    });
+  },
+
+  buildEffects: function () {
+    const scene = this.el.sceneEl.object3D;
+    // 타이어 자국
+    const skidGeometry = new THREE.PlaneGeometry(0.46, 0.8);
+    skidGeometry.rotateX(-Math.PI / 2);
+    this.skids = new THREE.InstancedMesh(skidGeometry, new THREE.MeshBasicMaterial({ color: '#0b0e36', transparent: true, opacity: 0.42, depthWrite: false }), 900);
+    this.skids.frustumCulled = false;
+    this.skids.count = 0;
+    this.skidIndex = 0;
+    this.skidsFilled = 0;
+    scene.add(this.skids);
+    // 연기와 배기 입자
+    this.puffs = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(0.5, 0), new THREE.MeshBasicMaterial({ color: '#e7e9ff', transparent: true, opacity: 0.55 }), 70);
+    this.puffs.frustumCulled = false;
+    this.puffData = [];
+    for (let i = 0; i < 70; i++) this.puffData.push({ life: 0, max: 1, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, size: 1 });
+    this.puffIndex = 0;
+    scene.add(this.puffs);
+    this.helper = new THREE.Object3D();
+  },
+
+  spawnPuff: function (x, y, z, vx, vz, size) {
+    const p = this.puffData[this.puffIndex];
+    this.puffIndex = (this.puffIndex + 1) % this.puffData.length;
+    Object.assign(p, { life: 0.55, max: 0.55, x: x, y: y, z: z, vx: vx + (Math.random() - 0.5) * 2, vy: 1.4, vz: vz + (Math.random() - 0.5) * 2, size: size });
+  },
+
+  stepPhysics: function (h) {
+    const s = this.state, c = CONFIG.car, sus = CONFIG.suspension;
+    s.prevX = s.x;
+    s.prevZ = s.z;
+    s.prevHeading = s.heading;
+    const sin = Math.sin(s.heading), cos = Math.cos(s.heading);
+    const fx = -sin, fz = -cos, rx = cos, rz = -sin;
+    let vf = s.vx * fx + s.vz * fz;
+    let vr = s.vx * rx + s.vz * rz;
+    const before = vf;
+
+    s.hardBraking = input.brake && Math.abs(vf) > 0.4;
+    s.boosting = input.boost && input.forward && !input.brake && !input.back;
+    let accel = 0;
+    if (input.brake) {
+      accel = -Math.sign(vf) * Math.min(c.hardBrake, Math.abs(vf) / h);
+    } else if (input.forward && !input.back) {
+      if (vf < -0.5) accel = c.brake;
+      else {
+        const top = s.boosting ? c.boostSpeed : c.topSpeed;
+        const power = s.boosting ? c.boostAcceleration : c.acceleration;
+        accel = vf > top ? -c.drag * (vf - top) * 2 : power * (1 - vf / top);
+      }
+    } else if (input.back && !input.forward) {
+      if (vf > 0.5) accel = -Math.min(c.brake, vf / h);
+      else accel = -c.acceleration * 0.6 * (1 + vf / c.reverseSpeed);
+    } else {
+      accel = -vf * c.drag - Math.sign(vf) * Math.min(0.9, Math.abs(vf) / h);
+    }
+    vf += accel * h;
+
+    const steerTarget = (input.left ? 1 : 0) - (input.right ? 1 : 0);
+    s.steer += (steerTarget - s.steer) * (1 - Math.exp(-h * (steerTarget ? 8 : 11)));
+    const ratio = Math.min(Math.abs(vf) / c.topSpeed, 1);
+    const steerLimit = c.steerLow + (c.steerHigh - c.steerLow) * Math.pow(ratio, 0.75);
+    const yawRate = vf * Math.tan(s.steer * steerLimit) / c.wheelbase;
+    s.heading += yawRate * h;
+
+    vr *= Math.exp(-(input.brake ? c.brakeGrip : c.grip) * h);
+    s.vx = fx * vf + rx * vr;
+    s.vz = fz * vf + rz * vr;
+    s.forwardSpeed = vf;
+    s.slip = Math.abs(vr);
+    s.aLong = (vf - before) / h;
+    s.aLat = vf * yawRate;
+    s.x += s.vx * h;
+    s.z += s.vz * h;
+
+    // 차체 스프링: 가속도가 목표 기울기가 되고, 차체는 스프링처럼 뒤따라갑니다.
+    const pitchTarget = THREE.MathUtils.clamp(s.aLong * sus.pitchPerAccel, -sus.maxPitchDown, sus.maxPitchUp);
+    const rollTarget = THREE.MathUtils.clamp(-s.aLat * sus.rollPerAccel, -sus.maxRoll, sus.maxRoll);
+    const heaveTarget = -Math.min(0.09, Math.abs(s.aLong) * sus.heavePerAccel);
+    s.pitchV += (sus.stiffness * (pitchTarget - s.pitch) - sus.damping * s.pitchV) * h;
+    s.rollV += (sus.stiffness * (rollTarget - s.roll) - sus.damping * s.rollV) * h;
+    s.heaveV += (sus.stiffness * (heaveTarget - s.heave) - sus.damping * s.heaveV) * h;
+    s.pitch += s.pitchV * h;
+    s.roll += s.rollV * h;
+    s.heave += s.heaveV * h;
+    // 고속에서 바퀴가 역회전처럼 깜박이지 않도록 보이는 회전 속도에 상한을 둡니다.
+    s.wheelSpin += input.brake ? 0 : -THREE.MathUtils.clamp(vf / 0.4, -26, 26) * h;
+  },
+
+  collide: function () {
+    const s = this.state, b = WORLD.bounds;
+    if (Math.abs(s.x) > b) { s.x = Math.sign(s.x) * b; s.vx *= -0.45; s.pitchV -= 0.5; }
+    if (Math.abs(s.z) > b) { s.z = Math.sign(s.z) * b; s.vz *= -0.45; s.pitchV -= 0.5; }
+    WORLD.statics.forEach(function (o) {
+      const dx = s.x - o.x, dz = s.z - o.z, d = Math.hypot(dx, dz), min = 1.6 + o.r;
+      if (d >= min || d === 0) return;
+      const nx = dx / d, nz = dz / d;
+      s.x = o.x + nx * min;
+      s.z = o.z + nz * min;
+      const into = s.vx * nx + s.vz * nz;
+      if (into < 0) {
+        s.vx -= nx * into * 1.35;
+        s.vz -= nz * into * 1.35;
+        s.pitchV += into * 0.09;
+        s.rollV += (s.vx * nz - s.vz * nx) * 0.02;
+      }
+    });
+    const fx = -Math.sin(s.heading), fz = -Math.cos(s.heading);
+    WORLD.props.forEach(function (p) {
+      if (p.y > 1.4) return;
+      [1.35, -1.35].forEach(function (offset) {
+        const dx = p.x - (s.x + fx * offset), dz = p.z - (s.z + fz * offset);
+        const d = Math.hypot(dx, dz) || 0.001, min = 0.95 + p.r;
+        if (d >= min) return;
+        const nx = dx / d, nz = dz / d;
+        p.x += nx * (min - d);
+        p.z += nz * (min - d);
+        const closing = (s.vx - p.vx) * nx + (s.vz - p.vz) * nz;
+        if (closing <= 0) return;
+        const impulse = closing * 1.35;
+        p.vx += nx * impulse;
+        p.vz += nz * impulse;
+        p.vy = Math.max(p.vy, Math.min(closing * 0.3, 9));
+        p.spinX = (Math.random() - 0.5) * closing * 0.8;
+        p.spinZ = (Math.random() - 0.5) * closing * 0.8;
+        s.vx -= nx * impulse * p.mass * 0.03;
+        s.vz -= nz * impulse * p.mass * 0.03;
+        WORLD.wake(p);
+      });
+    });
+  },
+
+  updateProps: function (dt) {
+    const gravity = 24, props = WORLD.props;
+    props.forEach(function (p) {
+      if (p.asleep) return;
+      p.vy -= gravity * dt;
+      p.x += p.vx * dt;
+      p.z += p.vz * dt;
+      p.y += p.vy * dt;
+      const onGround = p.y <= 0;
+      if (onGround) { p.y = 0; p.vy = Math.abs(p.vy) > 2 ? -p.vy * 0.28 : 0; }
+      const friction = Math.exp(-(onGround ? 3.4 : 0.25) * dt);
+      p.vx *= friction;
+      p.vz *= friction;
+      p.spinX *= friction;
+      p.spinZ *= friction;
+      p.obj.rotation.x += p.spinX * dt;
+      p.obj.rotation.z += p.spinZ * dt;
+      const speed = Math.hypot(p.vx, p.vz);
+      if (onGround && speed < 2.2) {
+        // 멈출 때는 가까운 면으로 눕거나 서도록 정렬합니다.
+        const q = Math.PI / 2;
+        p.obj.rotation.x += (Math.round(p.obj.rotation.x / q) * q - p.obj.rotation.x) * Math.min(1, dt * 7);
+        p.obj.rotation.z += (Math.round(p.obj.rotation.z / q) * q - p.obj.rotation.z) * Math.min(1, dt * 7);
+      }
+      props.forEach(function (o) {
+        if (o === p || Math.abs(o.y - p.y) > 1) return;
+        const dx = o.x - p.x, dz = o.z - p.z, d = Math.hypot(dx, dz) || 0.001, min = o.r + p.r;
+        if (d >= min) return;
+        const nx = dx / d, nz = dz / d;
+        p.x -= nx * (min - d) * 0.5; p.z -= nz * (min - d) * 0.5;
+        o.x += nx * (min - d) * 0.5; o.z += nz * (min - d) * 0.5;
+        const closing = (p.vx - o.vx) * nx + (p.vz - o.vz) * nz;
+        if (closing > 0) {
+          p.vx -= nx * closing * 0.7; p.vz -= nz * closing * 0.7;
+          o.vx += nx * closing * 0.7; o.vz += nz * closing * 0.7;
+          WORLD.wake(o);
+        }
+      });
+      p.obj.position.set(p.x, p.y + p.baseY, p.z);
+    });
+  },
+
+  stampSkids: function () {
+    const s = this.state;
+    const skidding = (s.hardBraking && Math.abs(s.forwardSpeed) > 3) || s.slip > 2.6;
+    if (!skidding) { s.lastStamp = null; return; }
+    const fx = -Math.sin(s.heading), fz = -Math.cos(s.heading), rx = -fz, rz = fx;
+    const cx = s.x - fx * 1.5, cz = s.z - fz * 1.5;
+    if (s.lastStamp && Math.hypot(cx - s.lastStamp.x, cz - s.lastStamp.z) < 0.7) return;
+    const helper = this.helper, self = this;
+    [-0.96, 0.96].forEach(function (side) {
+      helper.position.set(cx + rx * side, 0.07, cz + rz * side);
+      helper.rotation.set(0, s.heading, 0);
+      helper.updateMatrix();
+      self.skids.setMatrixAt(self.skidIndex, helper.matrix);
+      self.skidIndex = (self.skidIndex + 1) % 900;
+      self.skidsFilled = Math.min(900, self.skidsFilled + 1);
+    });
+    this.skids.count = this.skidsFilled;
+    this.skids.instanceMatrix.needsUpdate = true;
+    s.lastStamp = { x: cx, z: cz };
+  },
+
+  updatePuffs: function (dt) {
+    const s = this.state, helper = this.helper;
+    const fx = -Math.sin(s.heading), fz = -Math.cos(s.heading);
+    if (s.hardBraking && Math.abs(s.forwardSpeed) > 4 && Math.random() < 0.6) {
+      this.spawnPuff(s.x - fx * 1.6, 0.3, s.z - fz * 1.6, s.vx * 0.3, s.vz * 0.3, 1.1);
+    }
+    if (s.boosting && Math.random() < 0.35) {
+      this.spawnPuff(s.x - fx * 3.2, 0.7, s.z - fz * 3.2, s.vx * 0.2, s.vz * 0.2, 0.55);
+    }
+    for (let i = 0; i < this.puffData.length; i++) {
+      const p = this.puffData[i];
+      if (p.life > 0) p.life -= dt;
+      const t = Math.max(p.life, 0) / p.max;
+      p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
+      helper.position.set(p.x, p.y, p.z);
+      helper.rotation.set(t * 3, t * 5, 0);
+      helper.scale.setScalar(t > 0 ? p.size * (0.4 + (1 - t) * 1.2) * Math.min(1, t * 3) : 0.0001);
+      helper.updateMatrix();
+      this.puffs.setMatrixAt(i, helper.matrix);
+    }
+    helper.scale.setScalar(1);
+    this.puffs.instanceMatrix.needsUpdate = true;
+  },
+
+  updateHud: function () {
+    const s = this.state, c = CONFIG.car, hud = this.hud;
+    const speed = Math.abs(s.forwardSpeed);
+    hud.speed.textContent = Math.round(speed * c.displayScale);
+    let gear = 'N';
+    if (s.forwardSpeed < -0.5) gear = 'R';
+    else if (speed > 0.5) gear = Math.min(8, Math.ceil(speed / c.boostSpeed * 8));
+    hud.gear.textContent = gear;
+    const limit = 70;
+    const x = THREE.MathUtils.clamp(-s.aLat / limit, -1, 1) * 24;
+    const y = THREE.MathUtils.clamp(-s.aLong / limit, -1, 1) * 24;
+    hud.dot.setAttribute('cx', 30 + x);
+    hud.dot.setAttribute('cy', 30 + y);
+    const deg = function (rad) { const v = rad * 57.3; return (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(1) + '°'; };
+    hud.readout.textContent = '피치 ' + deg(s.pitch) + ' · 롤 ' + deg(s.roll);
+  },
+
+  // 그림자 지도의 픽셀 격자에 맞춰 태양을 옮겨, 이동 중 그림자 가장자리가 떨리지 않게 합니다.
+  updateSun: function (x, z) {
+    const axes = this.sunAxes, p = this.sunPoint.set(x, 0, z), texel = 76 / 2048;
+    const right = Math.round(p.dot(axes.right) / texel) * texel;
+    const up = Math.round(p.dot(axes.up) / texel) * texel;
+    const depth = p.dot(axes.back);
+    p.copy(axes.right).multiplyScalar(right).addScaledVector(axes.up, up).addScaledVector(axes.back, depth);
+    this.sunTarget.object3D.position.copy(p);
+    this.sun.object3D.position.copy(p).add(axes.offset);
+  },
+
+  tick: function (time, dtMs) {
+    const rawDt = Math.min(dtMs / 1000, 0.05), step = 1 / 120, s = this.state;
+    // 브라우저가 알려주는 프레임 시간의 잔떨림을 걸러냅니다. 큰 변화는 바로 따라갑니다.
+    this.smoothDt = Math.abs(rawDt - this.smoothDt) > 0.012 ? rawDt : this.smoothDt + (rawDt - this.smoothDt) * 0.12;
+    const dt = this.smoothDt;
+    this.accumulator += dt;
+    while (this.accumulator >= step) {
+      this.stepPhysics(step);
+      this.accumulator -= step;
+    }
+    const beforeX = s.x, beforeZ = s.z;
+    this.collide();
+    s.prevX += s.x - beforeX;
+    s.prevZ += s.z - beforeZ;
+    this.updateProps(dt);
+    this.stampSkids();
+    this.updatePuffs(dt);
+
+    // 물리 계산은 1/120초 단위라서, 화면에는 직전 두 계산 사이의 위치를 보간해 그립니다.
+    const alpha = this.accumulator / step;
+    s.renderX = s.prevX + (s.x - s.prevX) * alpha;
+    s.renderZ = s.prevZ + (s.z - s.prevZ) * alpha;
+    const renderHeading = s.prevHeading + (s.heading - s.prevHeading) * alpha;
+
+    const root = this.el.object3D;
+    root.position.set(s.renderX, 0, s.renderZ);
+    root.rotation.y = renderHeading;
+    this.bodyGroup.rotation.x = s.pitch;
+    this.bodyGroup.rotation.z = s.roll;
+    this.bodyGroup.position.y = s.heave;
+    const visualSteer = s.steer * 0.42;
+    this.steerGroups.forEach(function (group) { group.rotation.y = visualSteer; });
+    this.spinGroups.forEach(function (group) { group.rotation.x = s.wheelSpin; });
+
+    this.brakeLight.emissiveIntensity = input.brake || (input.back && s.forwardSpeed > 0.5) ? 5 : 0;
+    this.flame.visible = s.boosting;
+    if (s.boosting) this.flame.scale.set(1, 1, 1.1 + Math.random() * 1.1);
+
+    this.updateSun(s.renderX, s.renderZ);
+
+    // 카메라는 차를 그린 직후 같은 프레임에 움직여야 차가 화면에서 떨리지 않습니다.
+    const follow = this.cameraEl.components['follow-cam'];
+    if (follow) follow.follow(time, dt);
+
+    this.hudTimer += dt;
+    if (this.hudTimer > 0.05) { this.hudTimer = 0; this.updateHud(); }
+  }
+});
+
+/* ---------- 전지적 고정 시점 카메라: 회전하지 않고 차를 따라 이동합니다 ---------- */
+AFRAME.registerComponent('follow-cam', {
+  schema: { target: { type: 'selector' } },
+  init: function () {
+    this.leadX = 0;
+    this.leadZ = 0;
+    this.offset = new THREE.Vector3().fromArray(CONFIG.camera.offset);
+    this.zoom = 1;
+    this.ready = false;
+    this.calm = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const matrix = new THREE.Matrix4().lookAt(this.offset, new THREE.Vector3(), new THREE.Vector3(0, 1, 0));
+    this.el.object3D.quaternion.setFromRotationMatrix(matrix);
+  },
+  // f1-car가 매 프레임 끝에서 호출합니다. 차 위치는 그대로 따르고, 앞을 내다보는 거리만 부드럽게 변합니다.
+  follow: function (time, dt) {
+    const car = this.data.target.components['f1-car'];
+    if (!car) return;
+    const s = car.state, cam = CONFIG.camera;
+    const blend = this.ready ? 1 - Math.exp(-cam.smoothing * dt) : 1;
+    this.ready = true;
+    const aspect = this.el.sceneEl.canvas ? this.el.sceneEl.canvas.clientWidth / Math.max(this.el.sceneEl.canvas.clientHeight, 1) : 1.6;
+    const portrait = aspect < 1 ? 1 / Math.max(aspect, 0.55) * 0.8 : 1;
+    const speedRatio = Math.min(Math.abs(s.forwardSpeed) / CONFIG.car.boostSpeed, 1);
+    this.leadX += (s.vx * cam.lookAhead - this.leadX) * blend;
+    this.leadZ += (s.vz * cam.lookAhead - this.leadZ) * blend;
+    this.zoom += ((1 + speedRatio * cam.speedZoom) * portrait - this.zoom) * blend;
+    // 부스터의 진동은 난수 대신 느린 파형으로 만들어 프레임마다 튀지 않습니다.
+    const sway = s.boosting && !this.calm ? 0.035 : 0;
+    this.el.object3D.position.set(
+      s.renderX + this.leadX + this.offset.x * this.zoom + Math.sin(time * 0.019) * sway,
+      this.offset.y * this.zoom + Math.sin(time * 0.027) * sway,
+      s.renderZ + this.leadZ + this.offset.z * this.zoom
+    );
+  }
+});
+
+/* ---------- 시험 트랙과 주변 환경 ---------- */
+AFRAME.registerComponent('test-track', {
+  init: function () {
+    const c = CONFIG.color, root = this.el.object3D;
+    const curve = new THREE.CatmullRomCurve3([
+      [70, 70], [0, 70], [-70, 70], [-115, 48], [-122, 0], [-98, -36], [-55, -28],
+      [-28, -58], [15, -86], [72, -76], [116, -40], [124, 20], [108, 60]
+    ].map(function (p) { return new THREE.Vector3(p[0], 0, p[1]); }), true, 'catmullrom', 0.5);
+    const samples = 560, half = 7, kerb = 1.1;
+    const points = curve.getSpacedPoints(samples);
+    const normals = points.map(function (p, i) {
+      const a = points[(i - 1 + samples) % samples], b = points[(i + 1) % samples];
+      const t = new THREE.Vector3().subVectors(b, a).normalize();
+      return new THREE.Vector3(t.z, 0, -t.x);
+    });
+    const distanceToTrack = function (x, z) {
+      let best = Infinity;
+      for (let i = 0; i < samples; i += 4) best = Math.min(best, Math.hypot(points[i].x - x, points[i].z - z));
+      return best;
+    };
+    const stripe = function (from, to, y, color, every, phase, glow) {
+      const positions = [];
+      for (let i = 0; i < samples; i++) {
+        if (every && (i % (every * 2) < every) !== phase) continue;
+        const a = points[i], b = points[i + 1], na = normals[i], nb = normals[(i + 1) % samples];
+        const v = [
+          a.x + na.x * from, y, a.z + na.z * from, a.x + na.x * to, y, a.z + na.z * to,
+          b.x + nb.x * to, y, b.z + nb.z * to, b.x + nb.x * from, y, b.z + nb.z * from
+        ];
+        positions.push(v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8], v[0], v[1], v[2], v[6], v[7], v[8], v[9], v[10], v[11]);
+      }
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      const up = new Float32Array(positions.length);
+      for (let i = 1; i < up.length; i += 3) up[i] = 1;
+      geometry.setAttribute('normal', new THREE.BufferAttribute(up, 3));
+      const mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: color, emissive: color, emissiveIntensity: glow || 0, roughness: 0.95, side: THREE.DoubleSide }));
+      mesh.receiveShadow = true;
+      root.add(mesh);
+    };
+
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(1400, 1400), new THREE.MeshStandardMaterial({ color: c.ground, roughness: 1 }));
+    ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
+    root.add(ground);
+    stripe(-half, half, 0.03, c.track);
+    stripe(-0.12, 0.12, 0.05, c.trackLine, 5, true);
+    [[-half - kerb, -half], [half, half + kerb]].forEach(function (edge) {
+      stripe(edge[0], edge[1], 0.04, c.kerbA, 2, true, 0.4);
+      stripe(edge[0], edge[1], 0.04, c.kerbB, 2, false, 0.4);
+    });
+
+    // 출발선과 게이트
+    const black = makeMaterial(c.carbon), white = makeMaterial(c.kerbA), yellow = makeMaterial(c.accent), gate = makeMaterial(c.trunk);
+    for (let row = 0; row < 2; row++) {
+      for (let i = 0; i < 14; i++) {
+        const tile = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), (row + i) % 2 ? white : black);
+        tile.rotation.x = -Math.PI / 2;
+        tile.position.set(11.5 + row, 0.06, 63.5 + i);
+        root.add(tile);
+      }
+    }
+    addBox(0.6, 7, 0.6, gate, root, 12, 3.5, 60.5);
+    addBox(0.6, 7, 0.6, gate, root, 12, 3.5, 79.5);
+    addBox(0.4, 0.5, 19.6, gate, root, 12, 7, 70);
+    for (let i = 0; i < 5; i++) addBox(0.2, 0.36, 0.36, yellow, root, 11.7, 7, 66 + i * 2);
+    WORLD.statics.push({ x: 12, z: 60.5, r: 0.5 }, { x: 12, z: 79.5, r: 0.5 });
+
+    // 나무와 바위: 고정 충돌체
+    let seed = 2023;
+    const random = function () { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+    const treeGeo = new THREE.IcosahedronGeometry(1, 0), trunkGeo = new THREE.CylinderGeometry(0.35, 0.5, 1, 6);
+    const crownMat = makeMaterial(c.tree), trunkMat = makeMaterial(c.trunk), rockMat = makeMaterial(c.rock);
+    const blocked = function (x, z) { return Math.hypot(x, z - 42) < 16; };
+    for (let i = 0; i < 190; i++) {
+      const x = (random() - 0.5) * 310, z = (random() - 0.5) * 310;
+      const roll = random(), size = 1.4 + random() * 2.2;
+      if (distanceToTrack(x, z) < half + 8 || blocked(x, z)) continue;
+      if (roll < 0.72) {
+        addMesh(trunkGeo, trunkMat, root, x, 0.8, z).scale.set(1, 1.6, 1);
+        const crown = addMesh(treeGeo, crownMat, root, x, 1.5 + size, z);
+        crown.scale.set(size * 0.9, size * 1.4, size * 0.9);
+        crown.rotation.y = random() * 6;
+        WORLD.statics.push({ x: x, z: z, r: 0.7 });
+      } else {
+        const rock = addMesh(treeGeo, rockMat, root, x, size * 0.28, z);
+        rock.scale.set(size * 0.8, size * 0.5, size * 0.7);
+        rock.rotation.set(random(), random() * 6, random());
+        WORLD.statics.push({ x: x, z: z, r: size * 0.65 });
+      }
+    }
+
+    // 외곽 울타리
+    const fence = makeMaterial(c.fence), b = WORLD.bounds + 2;
+    addBox(b * 2, 1.4, 1, fence, root, 0, 0.7, -b);
+    addBox(b * 2, 1.4, 1, fence, root, 0, 0.7, b);
+    addBox(1, 1.4, b * 2, fence, root, -b, 0.7, 0);
+    addBox(1, 1.4, b * 2, fence, root, b, 0.7, 0);
+
+    // 밀리는 물체
+    const addProp = function (object, x, z, baseY, r, mass, y) {
+      object.position.set(x, baseY + y, z);
+      root.add(object);
+      WORLD.props.push({ obj: object, x: x, z: z, y: y, baseY: baseY, r: r, mass: mass, vx: 0, vz: 0, vy: 0, spinX: 0, spinZ: 0, asleep: true, home: [x, z, y] });
+    };
+    const coneMat = makeMaterial(c.cone), coneBand = makeMaterial(c.crateAlt);
+    const makeCone = function () {
+      const group = new THREE.Group();
+      addBox(0.9, 0.08, 0.9, coneMat, group, 0, -0.52, 0);
+      addMesh(new THREE.ConeGeometry(0.4, 1.05, 8), coneMat, group, 0, 0, 0);
+      addMesh(new THREE.CylinderGeometry(0.15, 0.24, 0.2, 8), coneBand, group, 0, 0.1, 0);
+      return group;
+    };
+    for (let i = 0; i < 7; i++) addProp(makeCone(), -8 - i * 12, 70 + (i % 2 ? 3.2 : -3.2), 0.56, 0.5, 0.5, 0);
+    const crateA = makeMaterial(c.crate), crateB = makeMaterial(c.crateAlt);
+    const crateGeo = new THREE.BoxGeometry(1.3, 1.3, 1.3);
+    [4, 3, 2, 1].forEach(function (count, layer) {
+      for (let i = 0; i < count; i++) {
+        const crate = new THREE.Group();
+        addMesh(crateGeo, (layer + i) % 2 ? crateA : crateB, crate);
+        addProp(crate, (i - (count - 1) / 2) * 1.4 - 2, 49, 0.65, 0.7, 1.2, layer * 1.3);
+      }
+    });
+
+    WORLD.resetters.push(function () {
+      WORLD.props.forEach(function (p) {
+        p.x = p.home[0]; p.z = p.home[1]; p.y = p.home[2];
+        p.vx = p.vz = p.vy = p.spinX = p.spinZ = 0;
+        p.asleep = true;
+        p.obj.rotation.set(0, 0, 0);
+        p.obj.position.set(p.x, p.y + p.baseY, p.z);
+      });
+    });
+  }
+});
+</script>
+</head>
+<body>
+<a-scene xr-mode-ui="enabled: false" loading-screen="enabled: false"
+         background="color: #3a45d6" fog="type: linear; color: #3a45d6; near: 110; far: 300"
+         renderer="antialias: true; colorManagement: true; maxCanvasWidth: 1920; maxCanvasHeight: 1920"
+         shadow="type: pcfsoft">
+  <a-entity light="type: hemisphere; color: #ffffff; groundColor: #6d78ff; intensity: 1.7"></a-entity>
+  <a-entity id="sunTarget"></a-entity>
+  <a-entity id="sun" light="type: directional; color: #fff4dd; intensity: 2.4; target: #sunTarget;
+            castShadow: true; shadowMapWidth: 2048; shadowMapHeight: 2048; shadowBias: -0.0006;
+            shadowCameraLeft: -38; shadowCameraRight: 38; shadowCameraTop: 38; shadowCameraBottom: -38;
+            shadowCameraNear: 1; shadowCameraFar: 130"></a-entity>
+
+  <a-entity test-track></a-entity>
+  <a-entity id="car" f1-car></a-entity>
+  <a-entity camera="fov: 34; near: 1; far: 700" follow-cam="target: #car"></a-entity>
+</a-scene>
+
+<section id="intro" class="hud">
+  <h1>로우폴리 포뮬러 테스트</h1>
+  <p>WASD로 달리고, Shift로 부스터를, 스페이스바로 급브레이크를 씁니다. 급가속과 급정거 때 차체가 출렁입니다.</p>
+  <button id="start" type="button">주행 시작</button>
+</section>
+
+<div id="pad" class="hud" aria-label="조작 키">
+  <button class="key" type="button" data-input="forward">W</button>
+  <button class="key" type="button" data-input="left">A</button>
+  <button class="key" type="button" data-input="back">S</button>
+  <button class="key" type="button" data-input="right">D</button>
+  <button class="key" type="button" data-input="boost"><span>SHIFT<small>부스터</small></span></button>
+  <button class="key" type="button" data-input="brake"><span>SPACE<small>급브레이크</small></span></button>
+</div>
+
+<div id="gauge" class="hud">
+  <div id="motion">
+    <svg width="60" height="60" viewBox="0 0 60 60" aria-hidden="true">
+      <circle cx="30" cy="30" r="26" fill="none" stroke="#ffffff" stroke-opacity=".3"></circle>
+      <circle cx="30" cy="30" r="13" fill="none" stroke="#ffffff" stroke-opacity=".18"></circle>
+      <path d="M30 4V56M4 30H56" stroke="#ffffff" stroke-opacity=".18"></path>
+      <circle id="gDot" cx="30" cy="30" r="5" fill="#ffc531"></circle>
+    </svg>
+    <span id="readout">피치 +0.0° · 롤 +0.0°</span>
+  </div>
+  <div id="speedBox">
+    <span id="speed">0</span>
+    <span id="unit">km/h · 기어 <span id="gear">N</span></span>
+  </div>
+</div>
+
+<script>
+  document.getElementById('start').addEventListener('click', beginDriving);
+  document.querySelectorAll('.key').forEach(function (key) {
+    const name = key.dataset.input;
+    key.addEventListener('pointerdown', function (e) {
+      e.preventDefault();
+      if (key.setPointerCapture) key.setPointerCapture(e.pointerId);
+      setInput(name, true);
+      beginDriving();
+    });
+    ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(function (type) {
+      key.addEventListener(type, function () { setInput(name, false); });
+    });
+  });
+  window.addEventListener('pointerdown', function () { window.focus(); });
+</script>
+</body>
+</html>
